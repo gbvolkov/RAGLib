@@ -289,11 +289,13 @@ from langchain.retrievers.multi_vector import MultiVectorRetriever
 from langchain.storage import InMemoryByteStore
 
 if __name__ == "__main__":
-    json_file = "knowledgebase/kb_test_small.json"
-    embedding_model = "jina-embeddings-v3"  # Replace with your actual model name or path
-    store_path = "data/vectorstore_jina_multivector"
+    json_name = "knowledgebase/kb_test_small.json"
+    embedding_model_name = "jina-embeddings-v3"  # Replace with your actual model name or path
+    vectorestore_path = "data/vectorstore_jina_multivector"
 
     try:
-        vectorstore = create_vectorstore(json_file, embedding_model, batch_size=500, max_chunk_size=400, overlap=0.75)
+        (vectorstore, docstore) = create_vectorstore(json_name, embedding_model_name, batch_size=500, max_chunk_size=400, overlap=0.75)
+        save_vectorstore(vectorstore, docstore, vectorestore_path)
+
     except Exception as e:
         logger.error(f"Failed to create vectorstore: {e}")
