@@ -312,31 +312,6 @@ if __name__ == "__main__":
     store_path = "data/vectorstore_jina_multivector"
 
     try:
-        #1. Create vectorstore for smaller chunks (400 chars)
         vectorstore = create_vectorstore(json_file, embedding_model, batch_size=500, max_chunk_size=400, overlap=0.75)
-        #2. process_json_for_indexing with bigger chunks (docs)
-        #docs = process_json_for_indexing(json_file, max_chunk_size=4000, overlap=0)
-        #3. get list of problem_nos from docs
-        #4. set docstore at retriever retriever.docstore.mset(list(zip(doc_ids, docs)))
-
-
-        query = "Что такое осень?"
-        embeddings = JinaEmbeddings(
-            jina_api_key=config.JINA_API_KEY,
-            model_name="jina-embeddings-v3"  # e.g., "jina-embeddings-v3"
-        )
-
-        vectorstore = load_vectorstore()
-        docs_and_scores: List[Tuple[Document, float]] = vectorstore.similarity_search_with_score(query, k="5")
-
-        llm = ChatOpenAI(temperature=0, openai_api_key=os.environ.get('OPENAI_API_KEY'))
-        base_retriever = vectorstore.as_retriever()
-        retriever = MultiQueryRetriever.from_llm(base_retriever , llm, include_original=True, verbose=True)
-        docs2 = retriever.invoke(query)
-
-        for doc in docs2:
-            print(doc.page_content[:128])
-            print("==============================================")
-
     except Exception as e:
         logger.error(f"Failed to create vectorstore: {e}")
