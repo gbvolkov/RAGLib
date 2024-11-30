@@ -142,24 +142,6 @@ def process_json_for_indexing(json_file_path: str, max_chunk_size: int = 2000, o
     
     return processed_documents
 
-def create_vectorstore_old(json_file_path: str, embedding_model_name: str) -> FAISS:
-    processed_docs = process_json_for_indexing(json_file_path)
-    with open('processed_docs.txt', 'w', encoding='utf-8-sig') as f:
-        f.write('\n\n======================\n'.join([doc['content'] for doc in processed_docs]))
-    logger.info(f"Documents processed from {json_file_path}. {len(processed_docs)} documents found.")
-    #embedding_model_name = '../models/models--sentence-transformers--distiluse-base-multilingual-cased-v1'
-    #embeddings = HuggingFaceEmbeddings(model_name=embedding_model_name)
-    embeddings = JinaEmbeddings(jina_api_key=config.JINA_API_KEY, model_name="jina-embeddings-v3")
-    #embeddings = OpenAIEmbeddings(model="text-embedding-3-large", chunk_size=2500)
-
-    logger.info(f"Embeddings loaded from {embedding_model_name}.")
-    documents = [Document(page_content=doc['content'], metadata=doc['metadata']) for doc in processed_docs]
-    logger.info("Documents built.")
-    vectorstore = FAISS.from_documents(documents, embeddings)
-    logger.info("Vectore store ready.")
-    return vectorstore
-
-
 def get_documents(
         json_file_path: str,
         max_chunk_size: int = 4000,
