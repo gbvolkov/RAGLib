@@ -35,12 +35,16 @@ from langchain_community.llms import YandexGPT
 from tiktoken import get_encoding, Encoding
 #from ragatouille import RAGPretrainedModel
 from langchain_community.document_compressors import JinaRerank
+from langchain.retrievers.document_compressors import CrossEncoderReranker
+from langchain_community.cross_encoders import HuggingFaceCrossEncoder
 
 import os
 
 from abc import abstractmethod
 from typing import List, Any, Optional, Dict, Tuple
 import pickle
+
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
 
 import logging
 # Set up logging
@@ -50,7 +54,9 @@ logger = logging.getLogger(__name__)
 DISTANCE_TRESHOLD = 0.8
 
 #RERANKER = RAGPretrainedModel.from_pretrained("colbert-ir/colbertv2.0") #Does not work on Windows. Use Jina instead.
-RERANKER = JinaRerank()
+#RERANKER = JinaRerank()
+reranker_model = HuggingFaceCrossEncoder(model_name="models/bge-reranker-large")
+RERANKER = CrossEncoderReranker(model=reranker_model, top_n=3)
 
 
 
@@ -689,7 +695,8 @@ if __name__ == '__main__':
         ArgumentDefaultsHelpFormatter,
         BooleanOptionalAction,
     )
-    vectorestore_path = 'data/vectorstore_jina_multivector'
+    #vectorestore_path = 'data/vectorstore_jina_multivector'
+    vectorestore_path = 'data/vectorstore_e5'
 
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument(
@@ -702,19 +709,12 @@ if __name__ == '__main__':
     args = vars(parser.parse_args())
     mode = args['mode']
 
-    
-    system_prompt = """You are an AI assistant. 
-Answer user question using provided Context.
-
-**Context**: {context}
-
-**Answer**:
-
-"""
+    with open('prompts/system_prompt_markdown_3.txt', 'r', encoding='utf-8') as f:
+        system_prompt = f.read()
 
     if mode == 'query':
         assistants = []
-        vectorstore = load_vectorstore(vectorestore_path, 'jina')
+        vectorstore = load_vectorstore(vectorestore_path, config.EMBEDDING_MODEL)
         retriever = get_retriever(vectorestore_path)
         assistants.append(RAGAssistantMistralAI(system_prompt, vectorestore_path))
 

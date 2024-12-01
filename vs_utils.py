@@ -1,13 +1,14 @@
 import json
 import pickle
 import os
-from typing import List, Dict, Tuple
-#from langchain_huggingface import HuggingFaceEmbeddings
+from typing import List, Dict, Tuple, Optional
+from langchain_huggingface import HuggingFaceEmbeddings
 #from langchain_openai import OpenAIEmbeddings
-from langchain_community.embeddings import JinaEmbeddings
+#from langchain_community.embeddings import JinaEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.schema import Document
-import logging
+from langchain_text_splitters import RecursiveJsonSplitter, RecursiveCharacterTextSplitter
+from transformers import AutoTokenizer
 import config
 import requests
 from requests.exceptions import JSONDecodeError
@@ -16,6 +17,7 @@ from tqdm import tqdm  # For progress tracking
 from nltk.tokenize import sent_tokenize
 import re
 
+import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -89,7 +91,7 @@ def chunk_sentences(sentences, max_chunk_size, overlap_size=0):
     return chunks
 
 
-def process_json_for_indexing(json_file_path: str, max_chunk_size: int = 2000, overlap=0.75) -> List[Dict]:
+def process_json_for_indexing_old(json_file_path: str, max_chunk_size: int = 2000, overlap=0.75) -> List[Dict]:
     try:
         with open(json_file_path, 'r', encoding='utf-8-sig') as file:
             data = json.load(file)
@@ -142,13 +144,94 @@ def process_json_for_indexing(json_file_path: str, max_chunk_size: int = 2000, o
     
     return processed_documents
 
+
+TOKENIZER = AutoTokenizer.from_pretrained(config.EMBEDDING_MODEL)
+class RecursiveJsonTokenSplitter(RecursiveJsonSplitter):
+    def __init__(
+        self, max_chunk_size: int = 2000, min_chunk_size: Optional[int] = None#, embedding_model_name: str = None
+    ):
+        super().__init__(max_chunk_size, min_chunk_size)    
+        #self.tokenizer = AutoTokenizer.from_pretrained(embedding_model_name)
+
+    @staticmethod
+    def _json_size(data: Dict) -> int:
+        """Calculate the size of the serialized JSON object."""
+        token_len = len(TOKENIZER.encode(json.dumps(data)))
+        return token_len
+
+def process_json_for_indexing(json_file_path: str, max_chunk_size: int = 2000, overlap=0.75, embedding_model_name: str = None) -> List[Dict]:
+    try:
+        with open(json_file_path, 'r', encoding='utf-8-sig') as file:
+            data = json.load(file)
+    except json.JSONDecodeError as e:
+        logger.info(f"Error decoding JSON: {e}")
+        return []
+    except FileNotFoundError:
+        logger.info(f"File not found: {json_file_path}")
+        return []
+
+    indexing_data = [
+        {
+            "problem_number": item["problem_number"],
+            "problem_description": item["problem_description"],
+            "solution_steps": item["solution_steps"],
+            "references": item["references"]
+        }
+        for item in data
+    ]
+
+    #from_huggingface_tokenizer(
+    #    AutoTokenizer.from_pretrained(embedding_model_name),
+    splitter = RecursiveJsonTokenSplitter(
+        max_chunk_size=max_chunk_size)
+
+    metadatas = []
+    for item in indexing_data:
+        metadata = {
+            'problem_number': item.get('problem_number', ''),
+            'chunk_number': None,
+            'total_chunks': None,
+            'actual_chunk_size': None
+        }
+        metadatas.append(metadata)
+
+    processed_documents = splitter.create_documents(texts=indexing_data, convert_lists=True, ensure_ascii = False, metadatas=metadatas)
+    return processed_documents
+
+
 def get_documents(
+        json_file_path: str,
+        max_chunk_size: int = 4000,
+        overlap: int = 0.5,
+        embedding_model_name: str = None
+) -> List[Document]:
+    # Step 1: Process the JSON file
+    processed_docs = process_json_for_indexing(json_file_path, max_chunk_size=max_chunk_size, overlap=overlap, embedding_model_name=embedding_model_name)
+    logger.info(f"Documents processed from {json_file_path}. {len(processed_docs)} documents found.")
+    if not processed_docs:
+        logger.error("No documents to process. Exiting vector store creation.")
+        return []
+    
+    if logger.isEnabledFor(logging.DEBUG):
+        # Save processed documents to a text file for debugging
+        with open('./logs/processed_docs.txt', 'w', encoding='utf-8-sig') as f:
+            f.write('\n\n======================\n'.join([doc for doc in processed_docs]))
+        logger.info("Processed documents saved to 'processed_docs.txt'.")
+    # Step 2: Convert processed docs to Document objects
+    #documents = [
+    #    Document(page_content=doc['content'], metadata=doc.get('metadata', {}))
+    #    for doc in processed_docs
+    #]
+    logger.info("Documents converted to LangChain Document objects.")
+    return processed_docs
+
+def get_documents_old(
         json_file_path: str,
         max_chunk_size: int = 4000,
         overlap: int = 0.5
 ) -> List[Document]:
     # Step 1: Process the JSON file
-    processed_docs = process_json_for_indexing(json_file_path, max_chunk_size=max_chunk_size, overlap=overlap)
+    processed_docs = process_json_for_indexing_old(json_file_path, max_chunk_size=max_chunk_size, overlap=overlap)
     logger.info(f"Documents processed from {json_file_path}. {len(processed_docs)} documents found.")
     if not processed_docs:
         logger.error("No documents to process. Exiting vector store creation.")
@@ -166,7 +249,8 @@ def get_documents(
     ]
     logger.info("Documents converted to LangChain Document objects.")
     return documents
-    
+
+
 def create_vectorstore(
     json_file_path: str,
     embedding_model_name: str,
@@ -189,17 +273,17 @@ def create_vectorstore(
     """
     try:
         # Step 1: Convert jsons to chunked list of Document objects
-        documents = get_documents(json_file_path, max_chunk_size=max_chunk_size, overlap=overlap)
+        documents = get_documents(json_file_path, max_chunk_size=max_chunk_size, overlap=overlap, embedding_model_name=embedding_model_name)
         if len(documents) == 0:
             logger.error("No documents to process. Exiting vector store creation.")
             return None
         
         # Step 2: Initialize the embedding model
-        #embeddings = HuggingFaceEmbeddings(model_name=embedding_model_name)
-        embeddings = JinaEmbeddings(
-            jina_api_key=config.JINA_API_KEY,
-            model_name="jina-embeddings-v3"  # e.g., "jina-embeddings-v3"
-        )
+        embeddings = HuggingFaceEmbeddings(model_name=embedding_model_name)
+        #embeddings = JinaEmbeddings(
+        #    jina_api_key=config.JINA_API_KEY,
+        #    model_name="jina-embeddings-v3"  # e.g., "jina-embeddings-v3"
+        #)
         logger.info(f"Embeddings loaded from model: {embedding_model_name}.")
 
 
@@ -268,8 +352,8 @@ def load_vectorstore(file_path: str, embedding_model_name: str) -> FAISS:
     
     # Reinitialize the embedding function
     logger.info(f"Loading vectorstore  from {file_path}")
-    #embeddings = HuggingFaceEmbeddings(model_name=embedding_model_name)
-    embeddings = JinaEmbeddings(jina_api_key=config.JINA_API_KEY, model_name="jina-embeddings-v3")
+    embeddings = HuggingFaceEmbeddings(model_name=embedding_model_name)
+    #embeddings = JinaEmbeddings(jina_api_key=config.JINA_API_KEY, model_name="jina-embeddings-v3")
     #embeddings = OpenAIEmbeddings(model="text-embedding-3-large", chunk_size=2500)
 
     vectorstore = FAISS.load_local(file_path, embeddings, allow_dangerous_deserialization=True)
@@ -289,9 +373,10 @@ from langchain.retrievers.multi_vector import MultiVectorRetriever
 from langchain.storage import InMemoryByteStore
 
 if __name__ == "__main__":
-    json_name = "knowledgebase/kb_test_small.json"
-    embedding_model_name = "jina-embeddings-v3"  # Replace with your actual model name or path
-    vectorestore_path = "data/vectorstore_jina_multivector"
+    json_name = "knowledgebase/kb.json"
+    #embedding_model_name = "jina-embeddings-v3"  # Replace with your actual model name or path
+    embedding_model_name = config.EMBEDDING_MODEL
+    vectorestore_path = "data/vectorstore_e5"
 
     try:
         (vectorstore, docstore) = create_vectorstore(json_name, embedding_model_name, batch_size=500, max_chunk_size=400, overlap=0.75)

@@ -11,8 +11,9 @@ load_dotenv(os.path.join(documents_path, 'gv.env'))
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_SD_ASSISTANT_BOT_TOKEN')
 #EMBEDDING_MODEL='sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
 
-EMBEDDING_MODEL='sentence-transformers/distiluse-base-multilingual-cased-v1'
+#EMBEDDING_MODEL='sentence-transformers/distiluse-base-multilingual-cased-v1'
 #EMBEDDING_MODEL='jinaai/jina-embeddings-v3'
+EMBEDDING_MODEL='models/multilingual-e5-large'
 
 GIGA_CHAT_USER_ID=os.environ.get('GIGA_CHAT_USER_ID')
 GIGA_CHAT_SECRET = os.environ.get('GIGA_CHAT_SECRET')
