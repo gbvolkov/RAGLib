@@ -1,7 +1,7 @@
 import json
 import pickle
 import os
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 from langchain_huggingface import HuggingFaceEmbeddings
 #from langchain_openai import OpenAIEmbeddings
 #from langchain_community.embeddings import JinaEmbeddings
@@ -47,7 +47,13 @@ def cleanup_ref_content(content: str) -> str:
     cleaned_content = re.sub(pattern, '', content)
     return cleaned_content
 
-def chunk_sentences(sentences, max_chunk_size, overlap_size=0):
+def _len(text: str, tokenizer: Any = None) -> int:
+    if tokenizer:
+        return len(tokenizer.encode(text))
+    else:
+        return len(text)
+    
+def chunk_sentences(sentences, max_chunk_size, overlap_size=0, tokenizer=None):
     chunks = []
     current_chunk = []
     current_length = 0
@@ -55,7 +61,7 @@ def chunk_sentences(sentences, max_chunk_size, overlap_size=0):
 
     while idx < len(sentences):
         sentence = sentences[idx]
-        sentence_length = len(sentence)
+        sentence_length = _len(sentence, tokenizer)
         
         if current_length + sentence_length <= max_chunk_size:
             current_chunk.append(sentence)
@@ -70,9 +76,9 @@ def chunk_sentences(sentences, max_chunk_size, overlap_size=0):
             overlap_length = 0
             overlap_idx = idx - 1
             
-            while overlap_idx >= 0 and overlap_length + len(sentences[overlap_idx]) <= overlap_size:
+            while overlap_idx >= 0 and overlap_length + _len(sentences[overlap_idx]) <= overlap_size:
                 overlap_sentences.insert(0, sentences[overlap_idx])
-                overlap_length += len(sentences[overlap_idx])
+                overlap_length += _len(sentences[overlap_idx], tokenizer)
                 overlap_idx -= 1
             
             # Start a new chunk with overlapping sentences
@@ -91,7 +97,7 @@ def chunk_sentences(sentences, max_chunk_size, overlap_size=0):
     return chunks
 
 
-def process_json_for_indexing_old(json_file_path: str, max_chunk_size: int = 2000, overlap=0.75) -> List[Dict]:
+def process_json_for_indexing(json_file_path: str, max_chunk_size: int = 2000, overlap=0.75, embedding_model_name: str = None) -> List[Dict]:
     try:
         with open(json_file_path, 'r', encoding='utf-8-sig') as file:
             data = json.load(file)
@@ -102,33 +108,36 @@ def process_json_for_indexing_old(json_file_path: str, max_chunk_size: int = 200
         logger.info(f"File not found: {json_file_path}")
         return []
 
+    tokenizer = None
+    if embedding_model_name:
+        tokenizer = AutoTokenizer.from_pretrained(embedding_model_name)
+
     processed_documents = []
-    
-    for item in data:
+    #for item in data:
+    for item in tqdm(data, desc="Processing json data", unit="item"):
         core_content = (
             f"Problem Number: {item.get('problem_number', '')}\n"
-            f"Problem Description: {item.get('problem_description', '')}\n"
-            f"Systems: {item.get('systems', '')}\n"
-            f"Solution Steps: {item.get('solution_steps', '')}\n"
+            #f"Problem Description: {item.get('problem_description', '')}\n"
+            #f"Systems: {item.get('systems', '')}\n"
+            #f"Solution Steps: {item.get('solution_steps', '')}\n"
         )
-        
-        links = item.get('links', '')
+        core_length = _len(f'{core_content}\nAdditional Information (Part 9999/9999):\n', tokenizer)
+        current_chunk_max_size = max_chunk_size - core_length
+
+        #links = item.get('links', '')
         #additional_content = f"Links:\n{links}\n\nReferences:\n{references}"
         if max_chunk_size > 0:
             references = cleanup_ref_content(item.get('references', ''))
         else:
             references = item.get('references', '')
-        additional_content = f"Links:\n \n\nReferences:\n{references}"
+        #additional_content = f"Links:\n \n\nReferences:\n{references}"
+        additional_content = f"{references}"
 
-        if max_chunk_size > 0 and len(additional_content) >= max_chunk_size:
+        if max_chunk_size > 0 and _len(additional_content, tokenizer) >= current_chunk_max_size:
             sentences = sent_tokenize(additional_content, language='russian')
-            additional_chunks = chunk_sentences(sentences, max_chunk_size=max_chunk_size, overlap_size=max_chunk_size * overlap)    
+            additional_chunks = chunk_sentences(sentences, max_chunk_size=current_chunk_max_size, overlap_size=current_chunk_max_size * overlap, tokenizer=tokenizer)    
         else:
-            additional_chunks = [additional_content]       #pno = item.get('problem_number', '')
-        #if str(pno) == '61':
-        #    pass
-
-        #additional_chunks = smart_chunk_text(additional_content, max_chunk_size)
+            additional_chunks = [additional_content] 
         
         for i, chunk in enumerate(additional_chunks):
             full_content = f"{core_content}\nAdditional Information (Part {i+1}/{len(additional_chunks)}):\n{chunk}"
@@ -138,7 +147,7 @@ def process_json_for_indexing_old(json_file_path: str, max_chunk_size: int = 200
                     'problem_number': item.get('problem_number', ''),
                     'chunk_number': i+1,
                     'total_chunks': len(additional_chunks),
-                    'actual_chunk_size': len(full_content)
+                    'actual_chunk_size': _len(full_content, tokenizer)
                 }
             })
     
@@ -159,7 +168,7 @@ class RecursiveJsonTokenSplitter(RecursiveJsonSplitter):
         token_len = len(TOKENIZER.encode(json.dumps(data)))
         return token_len
 
-def process_json_for_indexing(json_file_path: str, max_chunk_size: int = 2000, overlap=0.75, embedding_model_name: str = None) -> List[Dict]:
+def process_json_for_indexing_json(json_file_path: str, max_chunk_size: int = 2000, overlap=0.75, embedding_model_name: str = None) -> List[Dict]:
     try:
         with open(json_file_path, 'r', encoding='utf-8-sig') as file:
             data = json.load(file)
@@ -199,14 +208,14 @@ def process_json_for_indexing(json_file_path: str, max_chunk_size: int = 2000, o
     return processed_documents
 
 
-def get_documents(
+def get_documents_json(
         json_file_path: str,
         max_chunk_size: int = 4000,
         overlap: int = 0.5,
         embedding_model_name: str = None
 ) -> List[Document]:
     # Step 1: Process the JSON file
-    processed_docs = process_json_for_indexing(json_file_path, max_chunk_size=max_chunk_size, overlap=overlap, embedding_model_name=embedding_model_name)
+    processed_docs = process_json_for_indexing_json(json_file_path, max_chunk_size=max_chunk_size, overlap=overlap, embedding_model_name=embedding_model_name)
     logger.info(f"Documents processed from {json_file_path}. {len(processed_docs)} documents found.")
     if not processed_docs:
         logger.error("No documents to process. Exiting vector store creation.")
@@ -225,13 +234,14 @@ def get_documents(
     logger.info("Documents converted to LangChain Document objects.")
     return processed_docs
 
-def get_documents_old(
+def get_documents(
         json_file_path: str,
         max_chunk_size: int = 4000,
-        overlap: int = 0.5
+        overlap: int = 0.5,
+        embedding_model_name: str = None
 ) -> List[Document]:
     # Step 1: Process the JSON file
-    processed_docs = process_json_for_indexing_old(json_file_path, max_chunk_size=max_chunk_size, overlap=overlap)
+    processed_docs = process_json_for_indexing(json_file_path, max_chunk_size=max_chunk_size, overlap=overlap, embedding_model_name=embedding_model_name)
     logger.info(f"Documents processed from {json_file_path}. {len(processed_docs)} documents found.")
     if not processed_docs:
         logger.error("No documents to process. Exiting vector store creation.")
@@ -366,12 +376,6 @@ def load_vectorstore(file_path: str, embedding_model_name: str) -> FAISS:
 
     return (vectorstore, documents)
 
-
-from langchain_openai.chat_models import ChatOpenAI
-from langchain.retrievers.multi_query import MultiQueryRetriever
-from langchain.retrievers.multi_vector import MultiVectorRetriever
-from langchain.storage import InMemoryByteStore
-
 if __name__ == "__main__":
     json_name = "knowledgebase/kb.json"
     #embedding_model_name = "jina-embeddings-v3"  # Replace with your actual model name or path
@@ -379,7 +383,13 @@ if __name__ == "__main__":
     vectorestore_path = "data/vectorstore_e5"
 
     try:
-        (vectorstore, docstore) = create_vectorstore(json_name, embedding_model_name, batch_size=500, max_chunk_size=400, overlap=0.75)
+        (vectorstore, docstore) = create_vectorstore(
+            json_name, 
+            embedding_model_name, 
+            batch_size=500, 
+            max_chunk_size=512, 
+            overlap=0.75
+        )
         save_vectorstore(vectorstore, docstore, vectorestore_path)
 
     except Exception as e:
