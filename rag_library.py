@@ -716,7 +716,7 @@ if __name__ == '__main__':
         assistants = []
         vectorstore = load_vectorstore(vectorestore_path, config.EMBEDDING_MODEL)
         retriever = get_retriever(vectorestore_path)
-        assistants.append(RAGAssistantMistralAI(system_prompt, vectorestore_path))
+        assistants.append(RAGAssistantGPT(system_prompt, vectorestore_path))
 
         query = ''
 

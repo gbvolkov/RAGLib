@@ -117,9 +117,9 @@ def process_json_for_indexing(json_file_path: str, max_chunk_size: int = 2000, o
     for item in tqdm(data, desc="Processing json data", unit="item"):
         core_content = (
             f"Problem Number: {item.get('problem_number', '')}\n"
-            #f"Problem Description: {item.get('problem_description', '')}\n"
+            f"Problem Description: {item.get('problem_description', '')}\n"
             #f"Systems: {item.get('systems', '')}\n"
-            #f"Solution Steps: {item.get('solution_steps', '')}\n"
+            f"Solution Steps: {item.get('solution_steps', '')}\n"
         )
         core_length = _len(f'{core_content}\nAdditional Information (Part 9999/9999):\n', tokenizer)
         current_chunk_max_size = max_chunk_size - core_length
