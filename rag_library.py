@@ -2,7 +2,6 @@
 import config
 
 from vs_utils import load_vectorstore
-from format import format_for_telegram
 
 import re
 
@@ -320,23 +319,6 @@ retriever_manager = KBRetrieverManager()
 def get_retriever(kkb_path, max_context_window = -1):
     return retriever_manager.get_retriever(kkb_path, max_context_window)
 
-class TelegramOutputParser(BaseOutputParser):
-    def parse(self, output: Any) -> List[str]:
-        if isinstance(output, dict):
-            text = output.get('answer', '') or output.get('result', '') or str(output)
-        elif isinstance(output, str):
-            text = output
-        else:
-            text = str(output)
-        return format_for_telegram(text)
-
-    def get_format_instructions(self) -> str:
-        return "Format the output for Telegram using markdown."
-
-    @property
-    def _type(self) -> str:
-        return "telegram_output"
-
 class KBDocumentPromptTemplate(StringPromptTemplate):
     max_length : int = 0
     def __init__(self, max_length: int, **kwargs: Any):
@@ -361,10 +343,11 @@ from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 
 class RAGAssistant:
-    def __init__(self, system_prompt, kkb_path, max_context_window = -1):
+    def __init__(self, system_prompt, kkb_path, max_context_window = -1, output_parser = BaseOutputParser):
         logger.info(f"Initializing model with: {kkb_path}")
         self.system_prompt = system_prompt
         self.max_context_window = max_context_window
+        self.output_parser = output_parser
         self.retriever = get_retriever(kkb_path, self.max_context_window)
         logger.info(f"Dataretrieved built: {kkb_path}")
         self.llm = self.initialize()
@@ -392,7 +375,7 @@ class RAGAssistant:
         max_length = self.max_context_window - get_chat_prompt_template_length(self.prompt)
         my_prompt = KBDocumentPromptTemplate(max_length, input_variables=["page_content", "problem_number", "actual_chunk_size"])
 
-        docs_chain = create_stuff_documents_chain(self.llm, self.prompt, output_parser=TelegramOutputParser(), document_prompt=my_prompt, document_separator='\n#EOD\n\n')
+        docs_chain = create_stuff_documents_chain(self.llm, self.prompt, output_parser=self.output_parser(), document_prompt=my_prompt, document_separator='\n#EOD\n\n')
         self.rag_chain = create_retrieval_chain(self.retriever, docs_chain)
 
     def get_prompt(self, system_prompt):
@@ -426,16 +409,16 @@ class RAGAssistant:
 
 
 class RAGAssistantGPT(RAGAssistant):
-    def __init__(self, system_prompt, kkb_path):
-        super().__init__(system_prompt, kkb_path)
+    def __init__(self, system_prompt, kkb_path, output_parser = BaseOutputParser):
+        super().__init__(system_prompt, kkb_path, output_parser = output_parser)
     def initialize(self):
         return ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0.4)
 
 class RAGAssistantMistralAI(RAGAssistant):
-    def __init__(self, system_prompt, kkb_path):
-        super().__init__(system_prompt, kkb_path)
+    def __init__(self, system_prompt, kkb_path, output_parser = BaseOutputParser):
+        super().__init__(system_prompt, kkb_path, output_parser = output_parser)
     def initialize(self):
         return ChatMistralAI(
             model="mistral-large-latest",
@@ -443,8 +426,8 @@ class RAGAssistantMistralAI(RAGAssistant):
 
 
 class RAGAssistantYA(RAGAssistant):
-    def __init__(self, system_prompt, kkb_path):
-        super().__init__(system_prompt, kkb_path, 7200)
+    def __init__(self, system_prompt, kkb_path, output_parser = BaseOutputParser):
+        super().__init__(system_prompt, kkb_path, 7200, output_parser = output_parser)
     def initialize(self):
         return YandexGPT(
             #iam_token = None,
@@ -455,8 +438,8 @@ class RAGAssistantYA(RAGAssistant):
             )
 
 class RAGAssistantSber(RAGAssistant):
-    def __init__(self, system_prompt, kkb_path):
-        super().__init__(system_prompt, kkb_path)
+    def __init__(self, system_prompt, kkb_path, output_parser = BaseOutputParser):
+        super().__init__(system_prompt, kkb_path, output_parser = output_parser)
     def generate_auth_data(self, user_id, secret):
         return {"user_id": user_id, "secret": secret}
     def initialize(self):
@@ -468,8 +451,8 @@ class RAGAssistantSber(RAGAssistant):
             scope = config.GIGA_CHAT_SCOPE)
     
 class RAGAssistantGemini(RAGAssistant):
-    def __init__(self, system_prompt, kkb_path):
-        super().__init__(system_prompt, kkb_path)
+    def __init__(self, system_prompt, kkb_path, output_parser = BaseOutputParser):
+        super().__init__(system_prompt, kkb_path, output_parser = output_parser)
 
     def initialize(self):
         return ChatGoogleGenerativeAI(
@@ -497,80 +480,12 @@ def check_file_extension(filename, allowed_extensions):
     # Check if the file extension is in the list of allowed extensions
     return file_extension in [ext.lower() for ext in allowed_extensions]
 
-def parse_llama_response(llama_output: str) -> str:
-    """
-    Parses the output from a Llama 3.1 model and extracts only the assistant's response.
-    If the expected special tokens are not found, returns the original output.
-
-    Args:
-        llama_output (str): The raw output string from the Llama 3.1 model, including special tokens.
-
-    Returns:
-        str: The concatenated assistant responses as a single string, or the original output if patterns are absent.
-    """
-    # Define regex patterns for identifying headers and messages
-    header_pattern = re.compile(r'<\|start_header_id\|>(.*?)<\|end_header_id\|>')
-    message_split_pattern = re.compile(r'<\|start_header_id\|>.*?<\|end_header_id\|>')
-
-    # Check if the special header patterns exist in the llama_output
-    if not header_pattern.search(llama_output):
-        # If patterns are not found, return the original llama_output
-        return llama_output.strip()
-
-    # Find all headers and their corresponding positions
-    headers = [
-        (match.group(1).strip(), match.start(), match.end()) 
-        for match in header_pattern.finditer(llama_output)
-    ]
-
-    assistant_responses = []
-
-    for i, (role, start, end) in enumerate(headers):
-        if role.lower() == 'assistant':
-            # Determine the start of the message
-            message_start = end
-
-            # Determine the end of the message
-            if i + 1 < len(headers):
-                message_end = headers[i + 1][1]
-            else:
-                message_end = len(llama_output)
-
-            # Extract the message content
-            message = llama_output[message_start:message_end]
-
-            # Remove any special tokens within the message
-            message = re.sub(r'<\|[^|]+\|>', '', message).strip()
-
-            # Append the cleaned message to the list
-            assistant_responses.append(message)
-
-    # Concatenate all assistant responses into a single string
-    return "\n".join(assistant_responses)
-
-class LlamaOutputParser(TelegramOutputParser):
-    def parse(self, output: Any) -> List[str]:
-        if isinstance(output, dict):
-            text = output.get('answer', '') or output.get('result', '') or str(output)
-        elif isinstance(output, str):
-            text = output
-        else:
-            text = str(output)
-        return super().parse(parse_llama_response(text))
-   
-    def get_format_instructions(self) -> str:
-        return "Format the output from Llama model to dict of ['input', 'answer', context']."
-   
-    @property
-    def _type(self) -> str:
-        return "llama_output"
-   
 class RAGAssistantLocal(RAGAssistant):
-    def __init__(self, system_prompt, kkb_path, model_name='data/Meta-Llama-3.1-8B-Instruct-Q8_0.gguf'):
+    def __init__(self, system_prompt, kkb_path, model_name='data/Meta-Llama-3.1-8B-Instruct-Q8_0.gguf', output_parser = BaseOutputParser):
         self.model_name = model_name
         self.max_new_tokens = 2000
         #system_prompt = local_prompt #"Ты очень знающий сотрудник справочного бюро. Отвечай на вопросы легко и непринужденно. Question: {question} \nAnswer:"
-        super().__init__(system_prompt, kkb_path, 4096)
+        super().__init__(system_prompt, kkb_path, 4096, output_parser = output_parser)
         #self.rag_chain = (
         #    {"question": RunnablePassthrough()}
         #    | self.prompt
@@ -623,7 +538,7 @@ class RAGAssistantLocal(RAGAssistant):
 
         max_length = self.max_context_window - get_chat_prompt_template_length(self.prompt)
         my_prompt = KBDocumentPromptTemplate(max_length, input_variables=["page_content", "problem_number", "actual_chunk_size"])
-        docs_chain = create_stuff_documents_chain(self.llm, self.prompt, output_parser=LlamaOutputParser(), document_prompt=my_prompt, document_separator='\n#EOD\n\n')
+        docs_chain = create_stuff_documents_chain(self.llm, self.prompt, output_parser=self.output_parser(), document_prompt=my_prompt, document_separator='\n#EOD\n\n')
         self.rag_chain = create_retrieval_chain(self.retriever, docs_chain)
 
     def ask_question(self, query: str) -> str:
@@ -695,6 +610,7 @@ if __name__ == '__main__':
         ArgumentDefaultsHelpFormatter,
         BooleanOptionalAction,
     )
+    from output_parsers import TelegramOutputParser, LlamaOutputParser
     #vectorestore_path = 'data/vectorstore_jina_multivector'
     vectorestore_path = 'data/vectorstore_e5'
 
@@ -716,7 +632,7 @@ if __name__ == '__main__':
         assistants = []
         vectorstore = load_vectorstore(vectorestore_path, config.EMBEDDING_MODEL)
         retriever = get_retriever(vectorestore_path)
-        assistants.append(RAGAssistantGPT(system_prompt, vectorestore_path))
+        assistants.append(RAGAssistantGPT(system_prompt, vectorestore_path, output_parser=TelegramOutputParser))
 
         query = ''
 
