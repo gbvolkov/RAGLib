@@ -53,7 +53,7 @@ DISTANCE_TRESHOLD = 0.8
 
 #RERANKER = RAGPretrainedModel.from_pretrained("colbert-ir/colbertv2.0") #Does not work on Windows. Use Jina instead.
 #RERANKER = JinaRerank()
-reranker_model = HuggingFaceCrossEncoder(model_name="models/bge-reranker-large")
+reranker_model = HuggingFaceCrossEncoder(model_name="/models/bge-reranker-large")
 RERANKER = CrossEncoderReranker(model=reranker_model, top_n=3)
 
 
