@@ -2,7 +2,6 @@ import config
 
 from AIAssistantsLib.assistants import RAGAssistantGPT, RAGAssistantGemini, RAGAssistantGGUF, RAGAssistantSber, RAGAssistantLocal, RAGAssistantMistralAI, RAGAssistantYA, load_vectorstore
 
-
 import logging
 # Set up logging
 logging.basicConfig(level=logging.INFO)
